@@ -1,0 +1,182 @@
+
+---
+title: "Infosys_Project"
+output: html_document
+date: "2024-03-07"
+---
+```{r}
+library(spacyr)
+spacy_install()
+
+# I am only using a portion of the data given because of the difficulty to upload that much information onto my computer. Since my code works for a smaller subset of data I can say it would hopefully work the same for the rest of it. 
+# This code is a simple algorithm to decide which type of regulation that complaint is about, but I have added some more complexities to it in order to provide more further analysis. 
+
+# Here I am just loading up the needed libraries 
+library(spacyr)
+library(readr)
+library(textdata)  # Added library for sentiment analysis specifically 
+
+# I decided that it was important to try to use the NER model as well as other forms of categorizing the complaints. 
+# This would help especially because I had an extremely short period of time so training my own model would not be possible in the time frame, so using ones that exist is helpful. 
+
+spacy_initialize(model = "en_core_web_sm")
+
+# Defining a function to categorize complaints using spaCy NER and keyword matching
+categorize_complaints <- function(input_file) {
+  categorized_complaints <- list()
+  
+  # Define the regulations of interest
+  # I just focused on three different regulations in order to keep it clean and nice for my trials and debugging process 
+  regulations_of_interest <- list(
+    FCRA = c("FCRA", "Fair Credit Reporting Act", "Regulation V"),
+    FDCPA = c("FDCPA", "Fair Debt Collection Practices Act", "Regulation F"),
+    EFTA = c("EFTA", "Electronic Fund Transfer Act", "Regulation E")
+  )
+  
+  # Define a function for keyword matching
+  match_regulation <- function(complaint_text) {
+    # Define a list mapping keywords to relevant regulations
+    # In order to figure out what the best words would be I used the Code of Regulations information 
+    # I identified key concepts in each of the regulations 
+    # Through a lot of testing I was able to figure out some of the words that I was missing and needed to account for it. 
+    keyword_regulation_mapping <- list(
+      "Credit report" = "FCRA (Fair Credit Reporting Act)",
+      "Credit score"= "FCRA (Fair Credit Reporting Act)",
+      "Identity theft" = "FCRA (Fair Credit Reporting Act)",
+      "Dispute information" = "FCRA (Fair Credit Reporting Act)",
+      "Credit bureau" = "FCRA (Fair Credit Reporting Act)",
+      "Fair Credit Reporting" = "FCRA (Fair Credit Reporting Act)",
+      "Debt collector" = "FDCPA (Fair Debt Collection Practices Act)",
+      "Collection agency" = "FDCPA (Fair Debt Collection Practices Act)",
+      "Harassment" = "FDCPA (Fair Debt Collection Practices Act)",
+      "False representation" = "FDCPA (Fair Debt Collection Practices Act)",
+      "Validation of debt" = "FDCPA (Fair Debt Collection Practices Act)",
+      "Cease and desist" = "FDCPA (Fair Debt Collection Practices Act)",
+      "ATM transaction" = "EFTA (Electronic Fund Transfer Act)",
+      "Debit card" = "EFTA (Electronic Fund Transfer Act)",
+      "Electronic transfer" = "EFTA (Electronic Fund Transfer Act)",
+      "Unauthorized transaction" = "EFTA (Electronic Fund Transfer Act)",
+      "Error resolution" = "EFTA (Electronic Fund Transfer Act)",
+      "Electronic payment" = "EFTA (Electronic Fund Transfer Act)"
+      
+      # I can and will with more time add more keywords and regulations
+      # With more time I could really flesh it out and figure out more ideas for which keywords would be useful and learn through more trial runs. 
+      
+    )
+    
+    # Here I am searching for keywords in the complaint text and match to regulations
+    matched_regulations <- character()
+    for (keyword in names(keyword_regulation_mapping)) {
+      if (grepl(keyword, tolower(complaint_text))) {
+        matched_regulations <- c(matched_regulations, keyword_regulation_mapping[[keyword]])
+      }
+    }
+    
+    return(matched_regulations)
+  }
+  
+  # Reading the CSV file that I inputted 
+  complaints <- read_csv(input_file)
+  
+  # Perform NER and keyword matching to categorize complaints
+  for (i in 1:nrow(complaints)) {
+    complaint_text <- complaints[i, "Consumer complaint narrative"]
+    complaint_date <- complaints[i, "Date received"] 
+    # Added the above line to extract complaint date so we could match the type of regulation to the date that it occurred. This type of data would be useful to analyze what time periods had more of which type of regulation issues. 
+    doc <- spacy_parse(complaint_text)
+    
+    # Perform keyword matching
+    matched_regulations_keyword <- match_regulation(complaint_text)
+    
+    # Check if any identified entities match the regulations of interest
+    matched_regulations_ner <- character()
+    for (j in 1:length(doc$ents)) {
+      ent_text <- doc$ents[j, "text"]
+      for (regulation in names(regulations_of_interest)) {
+        if (any(tolower(regulations_of_interest[[regulation]]) %in% tolower(ent_text))) {
+          matched_regulations_ner <- c(matched_regulations_ner, regulation)
+        }
+      }
+    }
+    
+    # Combine matched regulations from NER and keyword matching
+    matched_regulations <- unique(c(matched_regulations_keyword, matched_regulations_ner))
+    
+    # Additional analysis: Check sentiment of complaint
+    # I thought this analysis was interesting to explore as well because it allowed us to see how the customer felt about the issue. Therefore looking at it we could focus resolving efforts on the specific regulations that cause the most negative sentiment score which would allow for the most customer satisfaction. 
+    sentiment_score <- analyze_sentiment(complaint_text)  # Function to analyze sentiment
+    if (sentiment_score > 0.5) {
+      sentiment <- "Positive"
+    } else if (sentiment_score < -0.5) {
+      sentiment <- "Negative"
+    } else {
+      sentiment <- "Neutral"
+    }
+    
+    # Additional analysis: Counting the number of words in complaint
+    # This would be interesting as well because we could in a sense assume that the complaints with the most words are the ones with the customers who felt like the issue deserved a lot of time and energy to explain and report it. This would be some information that we could analyze and dissect. 
+    word_count <- length(unlist(strsplit(complaint_text, "\\s+")))
+    
+    if (length(matched_regulations) > 0) {
+      categorized_complaints[[i]] <- list(complaint_text = complaint_text, matched_regulations = matched_regulations, complaint_date = complaint_date, sentiment = sentiment, word_count = word_count) 
+    } else {
+      categorized_complaints[[i]] <- list(complaint_text = complaint_text, matched_regulations = "No regulation match found", complaint_date = complaint_date, sentiment = sentiment, word_count = word_count) 
+    }
+  }
+  
+  return(categorized_complaints)
+}
+
+# Function to analyze sentiment of text in order to categorize them 
+analyze_sentiment <- function(text) {
+  sentiment_result <- get_sentiment(text)
+  return(sentiment_result$label)
+}
+
+# here I am inputting my data from the csv file and used it in order to run tests. I have given a little blurb at the end about some of the bugs I encountered and how I overcame them. I also included an explanation about the more analysis I could do given more time. 
+
+input_file <- '/Users/riyahariyaplar/Downloads/complaints-2024-03-07_17_00.csv'  
+categorized_complaints <- categorize_complaints(input_file)
+
+# Here I am printing categorized complaints
+for (complaint in categorized_complaints) {
+  print("Complaint:", complaint$complaint_text)
+  if (complaint$matched_regulations != "No regulation match found") {
+    print("Matched Regulation(s):", complaint$matched_regulations)
+  } else {
+    print("No regulation match found")
+  }
+  print("Date:", complaint$complaint_date) # Added line to print complaint date
+  print("Sentiment:", complaint$sentiment) # Added line to print sentiment
+  print("Word Count:", complaint$word_count) # Added line to print word count
+  print("")
+}
+
+## # Bugs:
+# - One potential bug is in the match_regulation function where it may not accurately match regulations if the keywords are present in a different format or spelling than what is expected. Adding additional keyword variations or using more robust matching techniques could help address this issue.
+# - Another potential issue is with the sentiment analysis, where the sentiment scores may not fully capture the nuanced emotions expressed in the complaint narratives. Fine-tuning the sentiment analysis model or considering alternative approaches could improve the accuracy of sentiment classification.
+# With more time I could address these above issues. 
+
+## Edge Cases I Used: 
+  # 1. Empty Input File:
+# - Test with an empty CSV file to verify graceful handling, perhaps by returning an informative message.
+# 2. Missing Values:
+# - Verify handling of missing values in "Consumer complaint narrative" or "Date received" columns.
+# 3. No Complaints Matched to Regulations:
+# - Ensure correct handling when no complaints match any regulations.
+# 4. Unexpected Keywords:
+# - Test with complaints containing unexpected or misspelled keywords for regulation matching.
+# 5. Extreme Sentiment Scores:
+# - Test with extreme sentiment scores (>0.9 or <-0.9) to ensure correct categorization.
+# 6. Large Input File:
+# - Measure performance with a large input CSV file containing thousands of complaints.
+# - This would be an issue for the entire data set if I were to try to upload it so it requires a better processor. 
+
+#Further Research: 
+## Trend Analysis: Analyze complaint volumes over time to identify any emerging patterns or trends in consumer grievances. This could involve plotting the number of complaints over different time periods (e.g., monthly, quarterly) and examining any significant fluctuations or seasonal variations.
+## I could provide visual results of the output of my code. 
+
+```
+
+
+
